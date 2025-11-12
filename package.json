@@ -1,0 +1,33 @@
+{
+  "name": "nestjs-langgraph-mcp-platform",
+  "version": "1.0.0",
+  "description": "NestJS platform with LangChain, LangGraph, MCP and Google Gemini",
+  "scripts": {
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main",
+    "build": "nest build"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0",
+    "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/config": "^3.0.0",
+    "@nestjs/swagger": "^7.0.0",
+    "@langchain/google-genai": "latest",
+    "@langchain/mcp-adapters": "latest",
+    "@langchain/langgraph": "latest",
+    "@langchain/core": "latest",
+    "@modelcontextprotocol/sdk": "latest",
+    "@modelcontextprotocol/server-math": "latest",
+    "class-validator": "^0.14.0",
+    "class-transformer": "^0.5.1",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.0.0",
+    "@nestjs/schematics": "^10.0.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "pipelines": [
+    {
+      "name": "Customer Support Pipeline",
+      "nodes": [
+        {
+          "id": "intent_classifier",
+          "type": "llm",
+          "config": {
+            "model": "claude-sonnet-4-20250514",
+            "temperature": 0.3,
+            "prompt": "Classify the customer intent in one short sentence:\n\nRequest: {input}"
+          }
+        },
+        {
+          "id": "knowledge_retrieval",
+          "type": "retriever",
+          "config": {
+            "source": "tenant1_kb",
+            "top_k": 5
+          }
+        },
+        {
+          "id": "response_generator",
+          "type": "llm",
+          "config": {
+            "model": "claude-sonnet-4-20250514",
+            "temperature": 0.7,
+            "prompt": "You are a tier-2 support engineer.\nIntent: {intent}\nContext: {context}\n\nGenerate a helpful, empathetic response for the customer."
+          }
+        }
+      ],
+      "edges": [
+        {
+          "from": "intent_classifier",
+          "to": "knowledge_retrieval"
+        },
+        {
+          "from": "knowledge_retrieval",
+          "to": "response_generator"
+        }
+      ]
+    }
+  ],
+  "knowledgeBases": {
+    "tenant1_kb": [
+      {
+        "title": "Workspace Access Troubleshooting",
+        "content": "If a customer cannot access the workspace, verify SSO status, confirm they are assigned to the workspace, and recommend clearing cache or using an incognito window before escalating.",
+        "tags": ["access", "workspace", "sso"]
+      },
+      {
+        "title": "Shipment Delay Policy",
+        "content": "Orders delayed beyond 3 business days are eligible for free expedited shipping upgrades and proactive status emails with new ETAs.",
+        "tags": ["shipping", "sla", "logistics"]
+      },
+      {
+        "title": "Billing Adjustment Guidelines",
+        "content": "Offer a 10% credit for verified invoice discrepancies and document the adjustment in the CRM ticket before closing.",
+        "tags": ["billing", "credit", "policy"]
+      }
+    ]
+  }
+}

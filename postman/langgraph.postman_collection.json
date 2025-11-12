@@ -1,0 +1,169 @@
+{
+  "info": {
+    "name": "LangGraph NestJS Platform",
+    "_postman_id": "00000000-0000-0000-0000-000000000000",
+    "description": "Postman collection for interacting with the LangGraph-powered NestJS agent and MCP services.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Agent",
+      "item": [
+        {
+          "name": "Query Agent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Calculate 25 * 48 and explain the steps\",\n  \"mcpServers\": [\"math\"],\n  \"conversationHistory\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Hi agent!\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"Hello! How can I help you today?\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/agent/query",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "agent",
+                "query"
+              ]
+            },
+            "description": "Send a synchronous query to the LangGraph agent and receive a complete response."
+          },
+          "response": []
+        },
+        {
+          "name": "Stream Agent Response",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Summarize the latest project status update\",\n  \"mcpServers\": [\"math\"],\n  \"conversationHistory\": []\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/agent/stream",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "agent",
+                "stream"
+              ]
+            },
+            "description": "Initiate a streaming query. The service combines streamed chunks server-side before returning the response payload."
+          },
+          "response": []
+        },
+        {
+          "name": "Run Pipeline",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pipelineName\": \"Client 1 Multi-Step Support\",\n  \"input\": \"Client reports they cannot export more than 2GB of data\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/agent/pipeline/run",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "agent",
+                "pipeline",
+                "run"
+              ]
+            },
+            "description": "Execute a configured workflow defined in config.json (or the file pointed to by PIPELINE_CONFIG_PATH)."
+          },
+          "response": []
+        },
+        {
+          "name": "Agent Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/agent/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "agent",
+                "health"
+              ]
+            },
+            "description": "Verify that the agent service is running."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "MCP",
+      "item": [
+        {
+          "name": "List MCP Tools",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mcp/tools",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mcp",
+                "tools"
+              ]
+            },
+            "description": "Retrieve currently available MCP tools exposed by the service."
+          },
+          "response": []
+        },
+        {
+          "name": "MCP Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mcp/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "mcp",
+                "health"
+              ]
+            },
+            "description": "Check MCP service status and tool count."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

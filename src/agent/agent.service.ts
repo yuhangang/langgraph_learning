@@ -7,7 +7,10 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
+import {
+  ChatGoogleGenerativeAI,
+  GoogleGenerativeAIEmbeddings,
+} from '@langchain/google-genai';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { McpService } from '../mcp/mcp.service';
 import { AgentQueryDto, AgentResponseDto } from './dto/agent-query.dto';
@@ -16,11 +19,19 @@ import {
   PipelineRunResponseDto,
   PipelineStepDto,
 } from './dto/pipeline-run.dto';
-import { v4 as uuidv4 } from 'uuid';
+import {
+  KnowledgeBaseEntry,
+  IndexedKnowledgeEntry,
+  KnowledgeBaseIndexer,
+} from './knowledge-base-indexer';
+import { VectorStoreService } from './vector-store.service';
+import { ChatHistoryService, ChatMessageRecord } from './chat-history.service';
+import { ProductApiService } from '../mocks/product-api.service';
+import { LocationApiService } from '../mocks/location-api.service';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-type PipelineNodeType = 'llm' | 'retriever';
+type PipelineNodeType = 'llm' | 'retriever' | 'tool';
 
 interface PipelineNode {
   id: string;
@@ -39,21 +50,6 @@ interface PipelineDefinition {
   edges?: PipelineEdge[];
 }
 
-interface KnowledgeBaseEntry {
-  id?: string;
-  title: string;
-  content: string;
-  summary?: string;
-  tags?: string[];
-  keywords?: string[];
-  priority?: number;
-  weight?: number;
-}
-
-interface IndexedKnowledgeEntry extends KnowledgeBaseEntry {
-  tokens: string[];
-}
-
 interface PipelineState {
   input: string;
   context?: string;
@@ -67,9 +63,8 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AgentService.name);
   private model: ChatGoogleGenerativeAI;
   private agent: any;
-  private conversationStore = new Map();
 
-  private readonly defaultModelName = 'gemini-2.0-flash-exp';
+  private readonly defaultModelName = 'gemini-2.5-flash';
   private readonly defaultMaxOutputTokens = 2048;
   private readonly defaultTemperature = 0.7;
   private readonly pipelineModelCache = new Map<string, ChatGoogleGenerativeAI>();
@@ -78,22 +73,27 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
   private knowledgeBases: Record<string, KnowledgeBaseEntry[]> = {};
   private knowledgeBaseIndex: Record<string, IndexedKnowledgeEntry[]> = {};
   private pipelineConfigPath: string;
+  private embeddingsModel: GoogleGenerativeAIEmbeddings;
+  private readonly defaultEmbeddingModelName = 'text-embedding-004';
+  private readonly knowledgeBaseIndexer = new KnowledgeBaseIndexer();
+  private readonly productApiService = new ProductApiService();
+  private readonly locationApiService = new LocationApiService();
 
   constructor(
     private readonly configService: ConfigService,
     private readonly mcpService: McpService,
-  ) {}
+    private readonly vectorStoreService: VectorStoreService,
+    private readonly chatHistoryService: ChatHistoryService,
+  ) { }
 
   async onModuleInit() {
     this.logger.log('Initializing Agent Service...');
-    
-    // Initialize Gemini model
+
+    // Initialize Gemini model and embeddings
     this.apiKey = this.configService.get<string>('GOOGLE_API_KEY');
     if (!this.apiKey) {
       throw new Error('GOOGLE_API_KEY is not set in environment variables');
     }
-
-    await this.loadPipelineConfig();
 
     this.model = new ChatGoogleGenerativeAI({
       apiKey: this.apiKey,
@@ -101,6 +101,14 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
       maxOutputTokens: this.defaultMaxOutputTokens,
       temperature: this.defaultTemperature,
     });
+    this.embeddingsModel = new GoogleGenerativeAIEmbeddings({
+      apiKey: this.apiKey,
+      modelName: this.defaultEmbeddingModelName,
+    });
+
+    await this.vectorStoreService.initialize();
+    await this.chatHistoryService.initialize();
+    await this.loadPipelineConfig();
 
     // Initialize MCP and get tools
     await this.mcpService.initialize();
@@ -121,35 +129,62 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
   }
 
   async processQuery(queryDto: AgentQueryDto): Promise<AgentResponseDto> {
-    const conversationId = uuidv4();
     const toolsUsed: string[] = [];
 
     try {
-      // Build messages
-      const messages = [
-        ...(queryDto.conversationHistory || []),
-        { role: 'user', content: queryDto.query },
-      ];
+      // If pipelines are configured, use the first one (default behavior for this client)
+      if (this.pipelineDefinitions.length > 0) {
+        const pipeline = this.pipelineDefinitions[0];
+        const result = await this.executePipeline(pipeline, queryDto.query);
 
-      // Invoke agent
+        // Save to history
+        const { conversationId, history } = await this.resolveConversationHistory(queryDto);
+
+        if (conversationId) {
+          await this.chatHistoryService.appendMessage(conversationId, 'user', queryDto.query, {
+            customerId: queryDto.customerId,
+          });
+
+          await this.chatHistoryService.appendMessage(conversationId, 'assistant', result.finalOutput, {
+            toolsUsed: result.steps.map(s => s.nodeId),
+            pipelineName: pipeline.name,
+          });
+        }
+
+        return {
+          response: result.finalOutput,
+          toolsUsed: result.steps.map(s => s.nodeId),
+          conversationId,
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      // Fallback to default LangGraph agent
+      const { conversationId, history } = await this.resolveConversationHistory(queryDto);
+      const messages = [...history, { role: 'user', content: queryDto.query }];
+
+      if (conversationId) {
+        await this.chatHistoryService.appendMessage(conversationId, 'user', queryDto.query, {
+          customerId: queryDto.customerId,
+        });
+      }
+
       const result = await this.agent.invoke({
         messages,
       });
 
-      // Extract response
       const lastMessage = result.messages[result.messages.length - 1];
-      const response = lastMessage.content;
+      const response = this.extractContentFromMessage(lastMessage?.content ?? lastMessage);
 
-      // Track tools used (if available in result)
       if (result.toolCalls) {
         result.toolCalls.forEach(call => toolsUsed.push(call.name));
       }
 
-      // Store conversation
-      this.conversationStore.set(conversationId, {
-        messages: result.messages,
-        timestamp: new Date(),
-      });
+      if (conversationId && response) {
+        await this.chatHistoryService.appendMessage(conversationId, 'assistant', response, {
+          toolsUsed,
+        });
+      }
 
       return {
         response,
@@ -165,28 +200,42 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
 
   async processQueryStream(queryDto: AgentQueryDto) {
     try {
-      const messages = [
-        ...(queryDto.conversationHistory || []),
-        { role: 'user', content: queryDto.query },
-      ];
+      const { conversationId, history } = await this.resolveConversationHistory(queryDto);
+      const messages = [...history, { role: 'user', content: queryDto.query }];
+
+      if (conversationId) {
+        await this.chatHistoryService.appendMessage(conversationId, 'user', queryDto.query, {
+          customerId: queryDto.customerId,
+        });
+      }
 
       const stream = await this.agent.stream({
         messages,
       });
 
-      const chunks = [];
+      const chunks: string[] = [];
       for await (const chunk of stream) {
-        if (chunk.messages) {
+        if (chunk.messages?.length) {
           const lastMessage = chunk.messages[chunk.messages.length - 1];
-          if (lastMessage.content) {
-            chunks.push(lastMessage.content);
+          const content = this.extractContentFromMessage(
+            lastMessage?.content ?? lastMessage,
+          );
+          if (content) {
+            chunks.push(content);
           }
         }
       }
 
+      const response = chunks.join('');
+
+      if (conversationId && response) {
+        await this.chatHistoryService.appendMessage(conversationId, 'assistant', response);
+      }
+
       return {
-        response: chunks.join(''),
+        response,
         streaming: true,
+        conversationId,
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
@@ -195,8 +244,12 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  getConversation(conversationId: string) {
-    return this.conversationStore.get(conversationId);
+  async getConversation(conversationId: string) {
+    return this.chatHistoryService.getConversation(conversationId);
+  }
+
+  async listConversations(limit?: number) {
+    return this.chatHistoryService.listConversations(limit);
   }
 
   async runPipeline(pipelineRunDto: PipelineRunDto): Promise<PipelineRunResponseDto> {
@@ -225,6 +278,46 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
       steps: result.steps,
       timestamp: new Date().toISOString(),
     };
+  }
+
+  private async resolveConversationHistory(
+    queryDto: AgentQueryDto,
+  ): Promise<{ conversationId: string; history: Array<{ role: string; content: string }> }> {
+    let conversationId = queryDto.conversationId;
+    let history: Array<{ role: string; content: string }> = queryDto.conversationHistory ?? [];
+
+    if (conversationId) {
+      const stored = await this.chatHistoryService.getConversation(conversationId);
+      if (stored?.messages?.length) {
+        history = this.convertStoredMessagesToHistory(stored.messages);
+      }
+    } else {
+      const created = await this.chatHistoryService.createConversation(
+        queryDto.subject,
+        queryDto.customerId,
+        queryDto.metadata,
+      );
+      conversationId = created.id;
+    }
+
+    if (!conversationId) {
+      throw new Error('Failed to resolve or create a conversation ID for chat history');
+    }
+
+    return { conversationId, history };
+  }
+
+  private convertStoredMessagesToHistory(
+    messages: ChatMessageRecord[],
+  ): Array<{ role: string; content: string }> {
+    if (!messages?.length) {
+      return [];
+    }
+
+    return messages.map(message => ({
+      role: message.role,
+      content: message.content ?? '',
+    }));
   }
 
   private async executePipeline(pipeline: PipelineDefinition, userInput: string) {
@@ -256,9 +349,16 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
           state.context = typeof output === 'string' ? output : JSON.stringify(output);
         }
       } else if (node.type === 'retriever') {
-        output = this.runRetrieverNode(node, state);
+        output = await this.runRetrieverNode(node, state);
         if (typeof output === 'object' && output?.context) {
           state.context = output.context;
+        }
+      } else if (node.type === 'tool') {
+        output = await this.runToolNode(node, state);
+        if (typeof output === 'string' || (typeof output === 'object' && output !== null)) {
+          // Append tool output to context if it's relevant
+          const toolOutputStr = typeof output === 'string' ? output : JSON.stringify(output);
+          state.context = state.context ? `${state.context}\n\nTool Output (${node.id}): ${toolOutputStr}` : `Tool Output (${node.id}): ${toolOutputStr}`;
         }
       } else {
         throw new BadRequestException(`Unsupported pipeline node type "${node.type}".`);
@@ -368,10 +468,12 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
     return content;
   }
 
-  private runRetrieverNode(node: PipelineNode, state: PipelineState) {
+  private async runRetrieverNode(node: PipelineNode, state: PipelineState) {
     const source = node.config?.source;
     if (!source) {
-      throw new BadRequestException(`Retriever node "${node.id}" is missing a source configuration.`);
+      throw new BadRequestException(
+        `Retriever node "${node.id}" is missing a source configuration.`,
+      );
     }
 
     const knowledgeBase = this.knowledgeBaseIndex[source];
@@ -380,14 +482,45 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
     }
 
     const topK = typeof node.config?.top_k === 'number' ? node.config.top_k : node.config?.topK ?? 3;
-    const queryContext = [state.input, state.intent, state.context]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase();
+    const queryContext = [state.input, state.intent].filter(Boolean).join(' ').toLowerCase();
     const queryTokens = this.tokenizeText(queryContext);
+    const queryEmbedding = await this.generateQueryEmbedding(state);
+
+    const vectorResults = queryEmbedding
+      ? await this.vectorStoreService.semanticSearch(source, queryEmbedding, topK)
+      : [];
+
+    if (vectorResults.length) {
+      const context = vectorResults
+        .map(
+          ({ title, content, metadata }, index) =>
+            `Snippet ${index + 1} - ${title}
+Summary: ${metadata?.summary ?? 'n/a'}
+${content}`,
+        )
+        .join('\n\n');
+
+      return {
+        source,
+        matches: vectorResults.map((result, index) => ({
+          rank: index + 1,
+          id: result.id,
+          title: result.title,
+          content: result.content,
+          summary: result.metadata?.summary,
+          tags: result.metadata?.tags,
+          keywords: result.metadata?.keywords,
+          score: result.score,
+        })),
+        context,
+      };
+    }
 
     let scored = knowledgeBase
-      .map(entry => ({ entry, score: this.scoreKnowledgeEntry(queryTokens, entry) }))
+      .map(entry => ({
+        entry,
+        score: this.scoreKnowledgeEntry(queryTokens, entry, queryEmbedding),
+      }))
       .filter(({ score }) => score > 0 || !queryTokens.length)
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
@@ -401,13 +534,13 @@ export class AgentService implements OnModuleInit, OnModuleDestroy {
     const context =
       scored.length > 0
         ? scored
-            .map(
-              ({ entry }, index) =>
-                `Snippet ${index + 1} - ${entry.title}
+          .map(
+            ({ entry }, index) =>
+              `Snippet ${index + 1} - ${entry.title}
 Summary: ${entry.summary ?? 'n/a'}
 ${entry.content}`,
-            )
-            .join('\n\n')
+          )
+          .join('\n\n')
         : 'No relevant knowledge found in the configured knowledge base.';
 
     return {
@@ -424,6 +557,25 @@ ${entry.content}`,
       })),
       context,
     };
+  }
+
+  private async runToolNode(node: PipelineNode, state: PipelineState) {
+    const toolName = node.config?.toolName;
+    if (!toolName) {
+      throw new BadRequestException(`Tool node "${node.id}" is missing 'toolName' config.`);
+    }
+
+    if (toolName === 'mock_product_api') {
+      const query = (state.input + ' ' + (state.intent || '')).toLowerCase();
+      return this.productApiService.searchProducts(query);
+    }
+
+    if (toolName === 'mock_location_api') {
+      const query = (state.input + ' ' + (state.intent || '')).toLowerCase();
+      return this.locationApiService.searchLocations(query);
+    }
+
+    throw new BadRequestException(`Unknown tool name "${toolName}" requested by node "${node.id}".`);
   }
 
   private interpolatePrompt(template: string, state: PipelineState): string {
@@ -508,12 +660,12 @@ ${entry.content}`,
     const normalizedModel = modelName ?? this.defaultModelName;
     if (normalizedModel !== this.defaultModelName) {
       this.logger.warn(
-        `Model "${normalizedModel}" requested by pipeline but only Google Gemini (${this.defaultModelName}) is configured. Falling back.`,
+        `Model "${normalizedModel}" requested by pipeline but only Google Gemini(${this.defaultModelName}) is configured.Falling back.`,
       );
     }
 
     if (typeof temperature === 'number' && temperature !== this.defaultTemperature) {
-      const cacheKey = `${this.defaultModelName}:${temperature}`;
+      const cacheKey = `${this.defaultModelName}: ${temperature}`;
       if (!this.pipelineModelCache.has(cacheKey)) {
         this.pipelineModelCache.set(
           cacheKey,
@@ -537,7 +689,7 @@ ${entry.content}`,
       ? path.isAbsolute(configuredPath)
         ? configuredPath
         : path.resolve(process.cwd(), configuredPath)
-      : path.resolve(process.cwd(), 'config.json');
+      : path.resolve(process.cwd(), 'config/config.json');
 
     try {
       const raw = await fs.readFile(this.pipelineConfigPath, 'utf-8');
@@ -545,6 +697,7 @@ ${entry.content}`,
         this.logger.warn(`Pipeline config file at ${this.pipelineConfigPath} is empty.`);
         this.pipelineDefinitions = [];
         this.knowledgeBases = {};
+        this.knowledgeBaseIndex = {};
         return;
       }
 
@@ -554,7 +707,13 @@ ${entry.content}`,
         parsed.knowledgeBases && typeof parsed.knowledgeBases === 'object'
           ? parsed.knowledgeBases
           : {};
-      this.knowledgeBaseIndex = this.buildKnowledgeBaseIndex(this.knowledgeBases);
+      this.logger.log('Building knowledge base index...');
+      this.knowledgeBaseIndex = await this.knowledgeBaseIndexer.buildIndex(
+        this.knowledgeBases,
+        this.embeddingsModel,
+      );
+      this.logger.log('Knowledge base index built. Syncing sources...');
+      await this.vectorStoreService.syncSources(this.knowledgeBaseIndex);
 
       this.logger.log(
         `Loaded ${this.pipelineDefinitions.length} pipeline(s) from ${this.pipelineConfigPath}`,
@@ -562,7 +721,7 @@ ${entry.content}`,
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         this.logger.warn(
-          `Pipeline config file ${this.pipelineConfigPath} was not found. Workflow execution is disabled until it is created.`,
+          `Pipeline config file ${this.pipelineConfigPath} was not found.Workflow execution is disabled until it is created.`,
         );
       } else {
         this.logger.error(
@@ -576,34 +735,6 @@ ${entry.content}`,
     }
   }
 
-  private buildKnowledgeBaseIndex(sources: Record<string, KnowledgeBaseEntry[]>) {
-    return Object.entries(sources).reduce<Record<string, IndexedKnowledgeEntry[]>>(
-      (acc, [source, entries]) => {
-        acc[source] = entries.map(entry => ({
-          ...entry,
-          tokens: this.tokenizeKnowledgeEntry(entry),
-        }));
-        return acc;
-      },
-      {},
-    );
-  }
-
-  private tokenizeKnowledgeEntry(entry: KnowledgeBaseEntry): string[] {
-    const bucket = [
-      entry.title,
-      entry.summary,
-      entry.content,
-      ...(entry.tags ?? []),
-      ...(entry.keywords ?? []),
-    ]
-      .filter(Boolean)
-      .join(' ');
-
-    const tokens = this.tokenizeText(bucket);
-    return Array.from(new Set(tokens));
-  }
-
   private tokenizeText(text?: string): string[] {
     if (!text) {
       return [];
@@ -614,7 +745,41 @@ ${entry.content}`,
       .filter(Boolean);
   }
 
-  private scoreKnowledgeEntry(queryTokens: string[], entry: IndexedKnowledgeEntry) {
+  private async generateQueryEmbedding(state: PipelineState) {
+    const query = [state.input, state.intent].filter(Boolean).join('\n');
+    return this.embedText(query, 'retriever-query');
+  }
+
+  private async embedText(text?: string, label?: string) {
+    if (!text?.trim() || !this.embeddingsModel) {
+      return undefined;
+    }
+
+    try {
+      return await this.embeddingsModel.embedQuery(text);
+    } catch (error) {
+      this.logger.warn(
+        `Vectorization failed${label ? ` for ${label}` : ''}: ${(error as Error).message} `,
+      );
+      return undefined;
+    }
+  }
+
+  private scoreKnowledgeEntry(
+    queryTokens: string[],
+    entry: IndexedKnowledgeEntry,
+    queryEmbedding?: number[],
+  ) {
+    const lexicalScore = this.calculateLexicalScore(queryTokens, entry);
+    if (queryEmbedding && entry.embedding?.length === queryEmbedding.length) {
+      const similarity = this.cosineSimilarity(queryEmbedding, entry.embedding);
+      const priority = entry.priority ?? entry.weight ?? 1;
+      return similarity * priority + lexicalScore * 0.25;
+    }
+    return lexicalScore;
+  }
+
+  private calculateLexicalScore(queryTokens: string[], entry: IndexedKnowledgeEntry) {
     if (!entry.tokens.length) {
       return 0;
     }
@@ -630,6 +795,28 @@ ${entry.content}`,
 
     const priority = entry.priority ?? entry.weight ?? 1;
     const lengthPenalty = Math.log(entry.tokens.length + 1) + 1;
-    return (overlap + 0.1 * (entry.tags?.length ?? 0)) * priority / lengthPenalty;
+    return ((overlap + 0.1 * (entry.tags?.length ?? 0)) * priority) / lengthPenalty;
+  }
+
+  private cosineSimilarity(a: number[], b: number[]) {
+    if (!a.length || !b.length || a.length !== b.length) {
+      return 0;
+    }
+
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+
+    if (!normA || !normB) {
+      return 0;
+    }
+
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
   }
 }

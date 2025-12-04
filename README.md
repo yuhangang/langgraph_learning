@@ -10,6 +10,7 @@ A production-ready NestJS platform integrating LangChain, LangGraph, MCP (Model 
 - ✅ Input validation
 - 🔄 Streaming support
 - 🎯 Modular architecture
+- 🧠 Optional PostgreSQL + pgvector persistence for knowledge bases
 
 ## Installation
 
@@ -27,6 +28,10 @@ PORT=3000
 NODE_ENV=development
 # Optional: point to a different workflow definition file
 PIPELINE_CONFIG_PATH=config.json
+# Optional: enable PostgreSQL vector storage
+# VECTOR_DB_URL=postgresql://langgraph:langgraph@localhost:5432/langgraph
+# Optional: persist customer chat history (defaults to DATABASE_URL when set)
+# CHAT_DB_URL=postgresql://langgraph:langgraph@localhost:5432/langgraph_chat
 ```
 
 ## Running the Application
@@ -38,7 +43,27 @@ npm run start:dev
 # Production
 npm run build
 npm run start:prod
+
+# Docker
+docker build -t langgraph-api .
 ```
+
+### Docker & Compose
+
+1. Create a `.env` with `GOOGLE_API_KEY`, `PIPELINE_CONFIG_PATH`, etc. (see above).
+2. To bake only the API image: `docker build -t langgraph-api .`
+3. To launch the API plus a pgvector-backed PostgreSQL instance, use the provided compose file:
+
+```bash
+docker-compose up --build
+```
+
+The API will be available on `http://localhost:3000`, while PostgreSQL listens on `localhost:5432`
+with default credentials `langgraph/langgraph`. The compose stack automatically points
+`VECTOR_DB_URL` at the pgvector container so embeddings persist across restarts.
+
+Vector embeddings are persisted via PostgreSQL + pgvector. Set `VECTOR_DB_URL` (or `DATABASE_URL`)
+to your instance and the service will manage the schema automatically.
 
 ## Next.js Frontend
 
@@ -60,6 +85,8 @@ Set `NEXT_PUBLIC_API_BASE_URL` inside `frontend/.env.local` if your backend is n
 - `POST /agent/stream` - Stream agent response
 - `POST /agent/pipeline/run` - Execute a configured workflow pipeline
 - `GET /agent/health` - Check agent health
+- `GET /agent/conversations` - List stored customer conversations
+- `GET /agent/conversations/:conversationId` - Fetch a specific conversation + history
 
 ### MCP Endpoints
 
@@ -92,6 +119,12 @@ curl -X POST http://localhost:3000/agent/pipeline/run \
   }'
 ```
 
+### Customer Service Chat & History
+
+- `POST /agent/query` automatically creates a conversation (unless you pass `conversationId`) and stores both user and assistant turns in PostgreSQL when `CHAT_DB_URL` or `DATABASE_URL` is configured. Without a database it falls back to in-memory storage.
+- Include `customerId`, `subject`, and arbitrary `metadata` in the request to persist attribution data with the conversation.
+- Invoke `GET /agent/conversations` to page through recent threads or `GET /agent/conversations/:conversationId` to retrieve the full transcript for audits or UI playback.
+
 ## Configuring Pipelines
 
 Pipelines are stored in `config.json`. Each pipeline lists an ordered set of nodes (LLMs or retrievers) plus the edges that describe execution order. The default `Customer Support Pipeline` ships with a lightweight knowledge base (`knowledgeBases.tenant1_kb`) that the retriever node consults before generating the final response.
@@ -111,6 +144,9 @@ Only Google Gemini is provisioned out of the box; referencing other models (e.g.
 - `config.client1.json` contains a ready-to-use “Client 1 Multi-Step Support” workflow plus a curated `client_1_kb`. Point `PIPELINE_CONFIG_PATH=config.client1.json` in your `.env` to activate it.
 - Each knowledge-base entry accepts `summary`, `keywords`, and `priority` so the retriever can build a lightweight inverted index for faster lookups. Use short keywords (product names, ticket codes) and raise `priority` for the most accurate policies.
 - Keep the file under version control per client, or store it in object storage and mount it during deployment for clean separation between tenants.
+- Need durable embeddings beyond process memory? Set `VECTOR_DB_URL` (or `DATABASE_URL`) to a PostgreSQL
+  instance with pgvector and follow `docs/vector-store.md` to persist and query knowledge entries
+  semantically.
 
 ## Architecture
 

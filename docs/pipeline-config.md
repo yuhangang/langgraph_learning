@@ -76,14 +76,22 @@ Example entry from `config.client1.json`:
 }
 ```
 
+Each entry is vectorized automatically using Google's `embedding-001` model when the config
+file is loaded. The agent combines those semantic vectors with the lightweight keyword index,
+so richer summaries, tags, and keywords improve both recall modes. Ensure `GOOGLE_API_KEY`
+is set because the same credential powers the embedding requests.
+
 ## Environment Variables
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PIPELINE_CONFIG_PATH` | `config.json` | Absolute or relative path to the workflow file. |
 | `GOOGLE_API_KEY` | _(required)_ | API key for Gemini models used by every LLM node. |
+| `VECTOR_DB_URL` / `DATABASE_URL` | _(unset)_ | Optional PostgreSQL connection string (with pgvector) for persisting embeddings. |
 
 Set `PIPELINE_CONFIG_PATH=config.client1.json` (or any other tenant-specific file) to hot-swap workflows without code changes; restart the NestJS app after editing the config so the new pipelines and knowledge bases are indexed.
+
+See `docs/vector-store.md` for PostgreSQL/pgvector setup instructions when enabling the vector store.
 
 ## Validation Tips
 

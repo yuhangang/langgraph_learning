@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Query, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AgentService } from './agent.service';
 import { AgentQueryDto, AgentResponseDto } from './dto/agent-query.dto';
@@ -41,5 +41,30 @@ export class AgentController {
   @ApiOperation({ summary: 'Check agent service health' })
   async health() {
     return { status: 'ok', timestamp: new Date().toISOString() };
+  }
+
+  @Get('conversations')
+  @ApiOperation({ summary: 'List customer service conversations' })
+  @ApiResponse({
+    status: 200,
+    description: 'Collection of stored conversations',
+  })
+  async listConversations(@Query('limit') limit?: string) {
+    const parsedLimit = limit ? Math.min(Math.max(parseInt(limit, 10) || 0, 1), 200) : undefined;
+    return this.agentService.listConversations(parsedLimit);
+  }
+
+  @Get('conversations/:conversationId')
+  @ApiOperation({ summary: 'Retrieve a specific conversation with message history' })
+  @ApiResponse({
+    status: 200,
+    description: 'Customer service conversation with messages',
+  })
+  async getConversation(@Param('conversationId') conversationId: string) {
+    const conversation = await this.agentService.getConversation(conversationId);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} was not found`);
+    }
+    return conversation;
   }
 }

@@ -1,0 +1,127 @@
+{
+  "pipelines": [
+    {
+      "name": "Car Repair Triage & Support",
+      "description": "Classify customer issue, retrieve shop policies, and draft a helpful response for car repair inquiries.",
+      "nodes": [
+        {
+          "id": "car_repair_intent_classifier",
+          "type": "llm",
+          "config": {
+            "model": "gemini-2.5-flash",
+            "temperature": 0.25,
+            "prompt": "You are the intake assistant for 'AutoFix Garage'.\nClassify the customer's intent (e.g., Booking, Repair Status, Quote, Warranty) and note any urgency (e.g., 'broken down', 'stuck').\n\nRequest: {input}"
+          }
+        },
+        {
+          "id": "car_repair_kb_retrieval",
+          "type": "retriever",
+          "config": {
+            "source": "auto_shop_kb",
+            "top_k": 3
+          }
+        },
+        {
+          "id": "product_api_lookup",
+          "type": "tool",
+          "config": {
+            "toolName": "mock_product_api"
+          }
+        },
+        {
+          "id": "location_api_lookup",
+          "type": "tool",
+          "config": {
+            "toolName": "mock_location_api"
+          }
+        },
+        {
+          "id": "car_repair_response_generator",
+          "type": "llm",
+          "config": {
+            "model": "gemini-2.5-flash",
+            "temperature": 0.65,
+            "prompt": "You are a friendly and helpful service advisor for 'AutoFix Garage'.\nIntent: {intent}\nContext: {context}\n\nWrite a concise, empathetic reply. IMPORTANT: If the Context contains specific product information from a tool (e.g., 'Tool Output'), prioritize that over general knowledge base articles. Only mention other services if they are directly relevant to the user's specific request. Provide clear next steps (e.g., ask for VIN, offer booking link, explain policy)."
+          }
+        }
+      ],
+      "edges": [
+        {
+          "from": "car_repair_intent_classifier",
+          "to": "car_repair_kb_retrieval"
+        },
+        {
+          "from": "car_repair_kb_retrieval",
+          "to": "product_api_lookup"
+        },
+        {
+          "from": "product_api_lookup",
+          "to": "location_api_lookup"
+        },
+        {
+          "from": "location_api_lookup",
+          "to": "car_repair_response_generator"
+        }
+      ]
+    }
+  ],
+  "knowledgeBases": {
+    "auto_shop_kb": [
+      {
+        "id": "shop_warranty_policy",
+        "title": "Parts and Labor Warranty",
+        "summary": "Standard warranty coverage for repairs and parts.",
+        "content": "All new parts and associated labor are covered by a 12-month, 12,000-mile limited warranty, whichever comes first. This excludes normal wear-and-tear items (e.g., brake pads, wipers, oil) and tires (which carry a manufacturer warranty). Customer must present the original invoice for warranty service. Diagnostic fees are not covered by warranty.",
+        "tags": ["warranty", "policy", "parts", "labor"],
+        "keywords": ["warranty", "guarantee", "covered", "invoice"],
+        "priority": 1.5
+      },
+      {
+        "id": "shop_booking_quotes",
+        "title": "Booking and Estimate Process",
+        "summary": "How to book an appointment and policy on estimates.",
+        "content": "Bookings can be made online via our website or by calling the shop. For issues like 'check engine light' or 'strange noise', a $95 diagnostic fee is required to provide an accurate estimate. This fee is applied (credited) to the final repair cost if the customer proceeds with the recommended service.",
+        "tags": ["booking", "quote", "billing", "policy"],
+        "keywords": [
+          "appointment",
+          "estimate",
+          "quote",
+          "diagnostic fee",
+          "book"
+        ],
+        "priority": 1.4
+      },
+      {
+        "id": "shop_repair_status",
+        "title": "Checking Repair Status",
+        "summary": "Procedure for customers checking on their vehicle.",
+        "content": "Customers can check their repair status using the unique link sent via SMS at vehicle drop-off. If the link is unavailable, service advisors can look up the status in the 'RepairBay' system. Do not provide a concrete ETA unless the mechanic has marked the job as 'Final Assembly' or 'Awaiting Pickup'.",
+        "tags": ["status", "tracking", "communication", "process"],
+        "keywords": ["status", "update", "ready", "when", "done"],
+        "priority": 1.2
+      },
+      {
+        "id": "shop_standard_services",
+        "title": "Standard Maintenance Services & Pricing",
+        "summary": "Common services like oil changes and brake jobs.",
+        "content": "We offer: Full Synthetic Oil Change ($89.99 + tax, up to 5 qts), Basic Conventional Oil Change ($49.99 + tax), Front/Rear Brake Pad Replacement (starts at $199 per axle, requires inspection), Tire Rotation ($25). All services include a complimentary multi-point inspection.",
+        "tags": ["services", "pricing", "maintenance"],
+        "keywords": ["oil change", "brakes", "tires", "price", "cost"],
+        "priority": 1.0
+      },
+      {
+        "id": "shop_towing_roadside",
+        "title": "Towing and Roadside Assistance",
+        "summary": "Policy on towing services.",
+        "content": "We do not offer in-house towing. We have a partnership with 'CityWide Towing' (555-1234). Customers can have their vehicle towed to our shop 24/7. They should use the after-hours key drop box (by the main bay door) and call us the next business morning.",
+        "tags": ["towing", "roadside", "emergency"],
+        "keywords": ["tow truck", "stuck", "broken down", "roadside"],
+        "priority": 0.9
+      }
+    ]
+  },
+  "metadata": {
+    "owner": "auto_repair_shop",
+    "lastUpdated": "2025-11-18"
+  }
+}

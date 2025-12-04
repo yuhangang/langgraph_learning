@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { FormEvent, useCallback, useState } from 'react';
 import {
   queryAgent,
@@ -131,6 +132,16 @@ export default function HomePage() {
           Backend base URL: <strong>{apiBase}</strong>
         </p>
       </header>
+      <section style={{ marginBottom: '1.5rem' }}>
+        <h2 className="section-title">Customer Chat Console</h2>
+        <p style={{ color: 'var(--muted)' }}>
+          Review stored customer threads and continue chatting with the LangGraph-powered assistant in a
+          dedicated workspace.
+        </p>
+        <Link href="/chat" className="ghost-button">
+          Open Chat Console →
+        </Link>
+      </section>
 
       <div className="grid">
         <section>

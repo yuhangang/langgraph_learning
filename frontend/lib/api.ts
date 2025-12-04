@@ -4,6 +4,10 @@ export interface AgentQueryPayload {
   query: string;
   mcpServers?: string[];
   conversationHistory?: Array<{ role: string; content: string }>;
+  conversationId?: string;
+  customerId?: string;
+  subject?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface AgentResponse {
@@ -29,6 +33,25 @@ export interface PipelineRunResponse {
     output: unknown;
   }>;
   timestamp: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversationId: string;
+  role: string;
+  content: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ChatConversation {
+  id: string;
+  subject?: string;
+  customerId?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  lastMessageAt?: string;
+  messages?: ChatMessage[];
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -58,6 +81,7 @@ export async function streamAgent(payload: AgentQueryPayload) {
 }
 
 export async function runPipeline(payload: PipelineRunPayload) {
+  console.log(`${API_BASE_URL}/agent/pipeline/run`);
   const res = await fetch(`${API_BASE_URL}/agent/pipeline/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -69,4 +93,15 @@ export async function runPipeline(payload: PipelineRunPayload) {
 export async function listMcpTools() {
   const res = await fetch(`${API_BASE_URL}/mcp/tools`);
   return handleResponse<Array<{ name: string; description?: string }>>(res);
+}
+
+export async function listConversations(limit?: number) {
+  const query = typeof limit === 'number' ? `?limit=${encodeURIComponent(limit)}` : '';
+  const res = await fetch(`${API_BASE_URL}/agent/conversations${query}`);
+  return handleResponse<ChatConversation[]>(res);
+}
+
+export async function getConversation(conversationId: string) {
+  const res = await fetch(`${API_BASE_URL}/agent/conversations/${conversationId}`);
+  return handleResponse<ChatConversation>(res);
 }

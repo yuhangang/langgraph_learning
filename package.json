@@ -19,7 +19,7 @@
     "@langchain/langgraph": "latest",
     "@langchain/core": "latest",
     "@modelcontextprotocol/sdk": "latest",
-    "@modelcontextprotocol/server-math": "latest",
+    "pg": "^8.11.5",
     "class-validator": "^0.14.0",
     "class-transformer": "^0.5.1",
     "rxjs": "^7.8.1"

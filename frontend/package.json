@@ -11,14 +11,17 @@
   "dependencies": {
     "next": "14.2.3",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "react-markdown": "^10.1.0",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "20.11.30",
     "@types/react": "18.2.74",
     "@types/react-dom": "18.2.24",
-    "typescript": "5.4.5",
     "eslint": "8.57.0",
-    "eslint-config-next": "14.2.3"
+    "eslint-config-next": "14.2.3",
+    "typescript": "5.4.5"
   }
 }

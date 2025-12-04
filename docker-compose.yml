@@ -1,0 +1,30 @@
+version: '3.9'
+
+services:
+  api:
+    build: .
+    container_name: langgraph-api
+    env_file:
+      - .env
+    environment:
+      - VECTOR_DB_URL=postgresql://langgraph:langgraph@pgvector:5432/langgraph
+      - PIPELINE_CONFIG_PATH=config/config.client1.json
+    ports:
+      - '3005:3005'
+    depends_on:
+      - pgvector
+
+  pgvector:
+    image: ankane/pgvector:latest
+    container_name: langgraph-pgvector
+    environment:
+      POSTGRES_USER: langgraph
+      POSTGRES_PASSWORD: langgraph
+      POSTGRES_DB: langgraph
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+
+volumes:
+  pgvector-data:

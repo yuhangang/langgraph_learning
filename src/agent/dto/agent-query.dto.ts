@@ -1,5 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsArray } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsArray,
+  IsUUID,
+  IsObject,
+} from 'class-validator';
 
 export class AgentQueryDto {
   @IsString()
@@ -27,6 +34,38 @@ export class AgentQueryDto {
     required: false,
   })
   conversationHistory?: Array<{ role: string; content: string }>;
+
+  @IsOptional()
+  @IsUUID()
+  @ApiProperty({
+    description: 'Existing conversation ID to append the message to',
+    required: false,
+  })
+  conversationId?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiProperty({
+    description: 'Customer identifier for chat attribution',
+    required: false,
+  })
+  customerId?: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiProperty({
+    description: 'Conversation subject or short summary',
+    required: false,
+  })
+  subject?: string;
+
+  @IsOptional()
+  @IsObject()
+  @ApiProperty({
+    description: 'Additional metadata to persist with the conversation',
+    required: false,
+  })
+  metadata?: Record<string, any>;
 }
 
 export class AgentResponseDto {
